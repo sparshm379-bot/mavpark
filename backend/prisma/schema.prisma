@@ -8,11 +8,15 @@ datasource db {
 }
 
 model Garage {
-  id     String  @id @default(cuid())
-  name   String
-  lat    Float
-  lng    Float
-  floors Floor[]
+  id        String  @id @default(cuid())
+  name      String
+  lat       Float
+  lng       Float
+  lotType   String  @default("General")
+  isGarage  Boolean @default(false)
+  capacity  Int     @default(0)
+  available Int     @default(-1)
+  floors    Floor[]
 }
 
 model Floor {
