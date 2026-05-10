@@ -208,6 +208,9 @@ export default function MapHomeScreen({ navigation }) {
               {selected.available >= 0 && (
                 <Text style={styles.selectedCount}>{selected.available}/{selected.capacity}</Text>
               )}
+              {selected.source === 'sensor' && (
+                <Text style={styles.liveTag}>● LIVE</Text>
+              )}
             </View>
             {selected.isGarage && (
               <TouchableOpacity style={styles.viewBtn} onPress={() => openGarage(selected)}>
@@ -246,6 +249,9 @@ export default function MapHomeScreen({ navigation }) {
                   </Text>
                   {item.available >= 0 && (
                     <Text style={styles.lotCardCount}>{item.available}/{item.capacity}</Text>
+                  )}
+                  {item.source === 'sensor' && (
+                    <Text style={styles.liveTagSmall}>● LIVE</Text>
                   )}
                 </TouchableOpacity>
               )}
@@ -389,6 +395,8 @@ const styles = StyleSheet.create({
   lotCardName: { color: '#fff', fontSize: 12, fontWeight: '700', padding: 10, paddingBottom: 4 },
   lotCardStatus: { fontSize: 11, fontWeight: '600', paddingHorizontal: 10 },
   lotCardCount: { color: 'rgba(255,255,255,0.4)', fontSize: 10, padding: 10, paddingTop: 2 },
+  liveTag: { fontSize: 9, color: '#22c55e', fontWeight: '700', marginTop: 2 },
+  liveTagSmall: { fontSize: 8, color: '#22c55e', fontWeight: '700', paddingHorizontal: 10, paddingBottom: 6 },
 
   disclaimer: {
     position: 'absolute', bottom: 10, alignSelf: 'center',

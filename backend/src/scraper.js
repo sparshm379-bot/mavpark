@@ -1,90 +1,119 @@
 require('dotenv').config();
-const puppeteer = require('puppeteer');
+const https = require('https');
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
-const MODII_URL = 'https://uta.modii.co/v2/finder';
-const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+
+// Geohash encoder (same algorithm as Modii uses)
+const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+function encodeGeohash(lat, lng, precision = 6) {
+  let minLat = -90, maxLat = 90, minLng = -180, maxLng = 180;
+  let hash = '', bits = 0, bit = 0, even = true;
+  while (hash.length < precision) {
+    if (even) {
+      const mid = (minLng + maxLng) / 2;
+      if (lng > mid) { bit = bit * 2 + 1; minLng = mid; }
+      else { bit *= 2; maxLng = mid; }
+    } else {
+      const mid = (minLat + maxLat) / 2;
+      if (lat > mid) { bit = bit * 2 + 1; minLat = mid; }
+      else { bit *= 2; maxLat = mid; }
+    }
+    even = !even;
+    if (++bits === 5) { hash += BASE32[bit]; bits = 0; bit = 0; }
+  }
+  return hash;
+}
+
+// UTA campus geohashes that have Firebase sensor data (discovered empirically)
+const UTA_GEOHASHES = ['9vffjt', '9vffjv', '9vffjy', '9vffjz', '9vffnh', '9vffnj', '9vffnm', '9vffnn', '9vffnp', '9vffnq'];
+
+function fetchFirebase(geohash) {
+  return new Promise((resolve) => {
+    const req = https.get(
+      `https://spotdataappios-1498709221463.firebaseio.com/availability/${geohash}.json`,
+      (res) => {
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (!data || typeof data !== 'object') return resolve(null);
+            let open = 0, total = 0;
+            for (const spot of Object.values(data)) {
+              if (spot?.availabilityState !== undefined) {
+                total++;
+                // availabilityState: 1 = open, 2 = occupied
+                if (spot.availabilityState === 1) open++;
+              }
+            }
+            resolve(total > 0 ? { open, total, ratio: open / total } : null);
+          } catch { resolve(null); }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.setTimeout(10000, () => { req.destroy(); resolve(null); });
+  });
+}
 
 async function scrape() {
-  console.log(`[${new Date().toISOString()}] Scraping Modii...`);
-  let browser;
+  console.log(`[${new Date().toISOString()}] Polling Firebase availability...`);
 
-  try {
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    });
+  // 1. Fetch all UTA campus geohashes in parallel
+  const results = await Promise.all(UTA_GEOHASHES.map(async gh => {
+    const data = await fetchFirebase(gh);
+    if (data) console.log(`  ${gh}: ${data.open}/${data.total} open (${Math.round(data.ratio * 100)}%)`);
+    return [gh, data];
+  }));
 
-    const page = await browser.newPage();
-    const captured = [];
+  const geohashData = Object.fromEntries(results.filter(([, d]) => d !== null));
 
-    // Intercept all API responses
-    page.on('response', async (response) => {
-      const url = response.url();
-      const ct = response.headers()['content-type'] || '';
-      if (!ct.includes('json')) return;
-
-      try {
-        const json = await response.json();
-        // Modii returns lot/zone data in arrays — look for objects with occupancy/availability
-        if (Array.isArray(json) && json.length > 0 && (json[0].name || json[0].lotName || json[0].available !== undefined)) {
-          captured.push({ url, data: json });
-          console.log(`  Captured: ${url} (${json.length} items)`);
-        } else if (json && (json.lots || json.zones || json.features)) {
-          captured.push({ url, data: json });
-          console.log(`  Captured object: ${url}`);
-        }
-      } catch (_) {}
-    });
-
-    await page.goto(MODII_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-    await new Promise(r => setTimeout(r, 5000)); // extra wait for lazy loads
-
-    if (captured.length === 0) {
-      console.log('  No API data captured — Modii may require auth. Skipping update.');
-      return;
-    }
-
-    // Try to parse captured data into lot availability
-    for (const { url, data } of captured) {
-      const items = Array.isArray(data) ? data : (data.lots || data.zones || data.features || []);
-      for (const item of items) {
-        const name = item.name || item.lotName || item.label;
-        const available = item.available ?? item.availableSpaces ?? item.openSpaces ?? -1;
-        const capacity = item.capacity ?? item.totalSpaces ?? 0;
-
-        if (!name) continue;
-
-        // Find matching garage in our DB (fuzzy name match)
-        const garages = await prisma.garage.findMany();
-        const match = garages.find(g =>
-          g.name.toLowerCase().includes(name.toLowerCase()) ||
-          name.toLowerCase().includes(g.name.toLowerCase())
-        );
-
-        if (match && available >= 0) {
-          await prisma.garage.update({
-            where: { id: match.id },
-            data: { available, capacity: capacity || match.capacity },
-          });
-          console.log(`  Updated: ${match.name} → ${available}/${capacity || match.capacity} available`);
-        }
-      }
-    }
-
-    console.log(`  Done.`);
-  } catch (err) {
-    console.error('  Scrape error:', err.message);
-  } finally {
-    if (browser) await browser.close();
-    await prisma.$disconnect();
+  if (Object.keys(geohashData).length === 0) {
+    console.log('  No Firebase data available');
+    return;
   }
+
+  // 2. Get all garages from DB
+  const garages = await prisma.garage.findMany();
+
+  // 3. For each garage, find its geohash and update available count
+  let updated = 0;
+  for (const garage of garages) {
+    const gh = encodeGeohash(garage.lat, garage.lng, 6);
+    const data = geohashData[gh];
+
+    if (!data) {
+      // No sensor data for this area — keep as -1 (no data)
+      continue;
+    }
+
+    // Use the geohash occupancy ratio to estimate this lot's availability
+    // If the geohash has 80% of spots open, we estimate this lot is also ~80% available
+    const available = Math.round(garage.capacity * data.ratio);
+
+    await prisma.garage.update({
+      where: { id: garage.id },
+      data: { available },
+    });
+    updated++;
+  }
+
+  console.log(`  Updated ${updated}/${garages.length} garages from sensor data`);
 }
 
 async function run() {
-  await scrape();
-  setInterval(scrape, INTERVAL_MS);
+  try {
+    await scrape();
+  } catch (e) {
+    console.error('Scrape error:', e.message);
+  }
+  setInterval(async () => {
+    try { await scrape(); }
+    catch (e) { console.error('Scrape error:', e.message); }
+  }, INTERVAL_MS);
 }
 
+// Run immediately when required
 run();

@@ -17,4 +17,8 @@ app.use('/api/reports', reportsRouter);
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`MavPark backend running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`MavPark backend running on port ${PORT}`);
+  // Start Firebase availability scraper in background
+  require('./scraper');
+});
