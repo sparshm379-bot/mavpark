@@ -2,6 +2,7 @@ services:
   - type: web
     name: mavpark-backend
     env: node
+    region: oregon
     rootDir: backend
     buildCommand: npm install && npx prisma generate
     startCommand: npx prisma db push && node src/seed.js && node src/index.js
@@ -17,4 +18,4 @@ services:
 databases:
   - name: mavpark-db
     plan: free
-    region: ohio
+    region: oregon
