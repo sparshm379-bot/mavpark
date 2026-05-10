@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  StatusBar, ActivityIndicator, ScrollView, FlatList,
+  StatusBar, ActivityIndicator, FlatList, Modal,
+  ScrollView, Pressable,
 } from 'react-native';
 import MapView, { Marker, Callout } from 'react-native-maps';
 import { useAppStore } from '../store';
@@ -17,6 +18,22 @@ const UTA_REGION = {
   latitudeDelta: 0.018,
   longitudeDelta: 0.018,
 };
+
+// Which lot types each permit can park in
+const PERMIT_ACCESS = {
+  'Student Commuter':     ['Student Commuter', 'General', 'Remote Park and Ride'],
+  'Student Upgrade':      ['Student Upgrade', 'Student Commuter', 'General'],
+  'Faculty/Staff':        ['Faculty/Staff', 'Reserved Zone', 'Reserved Space', 'General', 'Student Commuter'],
+  'Visitor/Short Term':   ['Visitor/Short Term', 'General'],
+  'Reduced Rate':         ['Reduced Rate', 'General'],
+  'Remote Park and Ride': ['Remote Park and Ride', 'General'],
+  'ADA':                  ['ADA', 'General', 'Student Commuter', 'Faculty/Staff'],
+  'Motorcycle':           ['Motorcycle', 'General'],
+  'Resident':             ['Resident'],
+  'General':              ['General'],
+};
+
+const ALL_PERMITS = Object.keys(PERMIT_ACCESS);
 
 const FILTERS = ['All', 'Garages', 'Student', 'Faculty/Staff', 'Visitor', 'General'];
 
@@ -36,12 +53,10 @@ const LOT_COLORS = {
   'Non-UTA':              '#9ca3af',
 };
 
-function lotColor(lot) {
-  return LOT_COLORS[lot.lotType] || '#6b7280';
-}
+function lotColor(lot) { return LOT_COLORS[lot.lotType] || '#6b7280'; }
 
 function availLabel(lot) {
-  if (lot.available < 0 || lot.capacity === 0) return 'Unknown';
+  if (lot.available < 0) return 'No data';
   const pct = lot.available / lot.capacity;
   if (pct > 0.3) return 'Open';
   if (pct > 0.1) return 'Filling';
@@ -49,7 +64,7 @@ function availLabel(lot) {
 }
 
 function availColor(lot) {
-  if (lot.available < 0) return '#555';
+  if (lot.available < 0) return '#6b7280';
   const pct = lot.available / lot.capacity;
   if (pct > 0.3) return '#22c55e';
   if (pct > 0.1) return '#eab308';
@@ -66,11 +81,18 @@ function matchesFilter(lot, filter) {
   return true;
 }
 
+function matchesPermit(lot, permit) {
+  if (!permit) return true;
+  const allowed = PERMIT_ACCESS[permit] || [];
+  return allowed.includes(lot.lotType) || lot.isGarage;
+}
+
 export default function MapHomeScreen({ navigation }) {
-  const { lotStatus, setLotStatus, setSelectedGarage } = useAppStore();
+  const { lotStatus, setLotStatus, setSelectedGarage, myPermit, setMyPermit } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('All');
   const [selected, setSelected] = useState(null);
+  const [permitModal, setPermitModal] = useState(false);
 
   useEffect(() => {
     fetchStatus();
@@ -89,7 +111,9 @@ export default function MapHomeScreen({ navigation }) {
     }
   }
 
-  const filtered = lotStatus.filter(l => matchesFilter(l, filter));
+  const filtered = lotStatus
+    .filter(l => matchesFilter(l, filter))
+    .filter(l => matchesPermit(l, myPermit));
 
   function openGarage(lot) {
     if (!lot.isGarage) return;
@@ -122,7 +146,7 @@ export default function MapHomeScreen({ navigation }) {
                 <Text style={styles.calloutName}>{lot.name}</Text>
                 <Text style={styles.calloutType}>{lot.lotType}</Text>
                 <Text style={[styles.calloutAvail, { color: availColor(lot) }]}>
-                  {lot.available >= 0 ? `${lot.available}/${lot.capacity} open` : 'Crowdsource only'}
+                  {lot.available >= 0 ? `${lot.available}/${lot.capacity} open` : 'No data yet'}
                 </Text>
                 {lot.isGarage && <Text style={styles.calloutTap}>Tap to view floors →</Text>}
               </View>
@@ -135,10 +159,13 @@ export default function MapHomeScreen({ navigation }) {
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <Text style={styles.appName}>MavPark</Text>
-          <Text style={styles.lotCount}>{filtered.length} lots</Text>
+          <TouchableOpacity style={styles.permitBtn} onPress={() => setPermitModal(true)}>
+            <Text style={styles.permitBtnText}>
+              {myPermit ? `🎫 ${myPermit}` : '+ Add permit'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Filter chips */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View style={styles.filters}>
             {FILTERS.map(f => (
@@ -152,6 +179,17 @@ export default function MapHomeScreen({ navigation }) {
             ))}
           </View>
         </ScrollView>
+
+        {myPermit && (
+          <View style={styles.permitBanner}>
+            <Text style={styles.permitBannerText}>
+              Showing {filtered.length} lots compatible with <Text style={{ color: ORANGE }}>{myPermit}</Text>
+            </Text>
+            <TouchableOpacity onPress={() => setMyPermit(null)}>
+              <Text style={styles.permitBannerClear}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Selected lot card */}
@@ -190,7 +228,7 @@ export default function MapHomeScreen({ navigation }) {
             <ActivityIndicator color={ORANGE} style={{ marginTop: 12 }} />
           ) : (
             <FlatList
-              data={filtered.slice(0, 15)}
+              data={filtered.slice(0, 20)}
               horizontal
               keyExtractor={i => i.id}
               showsHorizontalScrollIndicator={false}
@@ -217,8 +255,53 @@ export default function MapHomeScreen({ navigation }) {
       )}
 
       <Text style={styles.disclaimer}>
-        {lotStatus.some(l => l.source === 'sensor') ? '● live UTA sensor data' : '● crowdsource only'} · not affiliated with PATS
+        {lotStatus.some(l => l.source === 'sensor') ? '● live sensor' : '● crowdsource'} · not affiliated with PATS
       </Text>
+
+      {/* Permit type modal */}
+      <Modal visible={permitModal} transparent animationType="slide" onRequestClose={() => setPermitModal(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setPermitModal(false)} />
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <Text style={styles.modalTitle}>My Permit Type</Text>
+          <Text style={styles.modalSubtitle}>
+            Select your permit to show only lots you can park in
+          </Text>
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {myPermit && (
+              <TouchableOpacity
+                style={styles.permitOption}
+                onPress={() => { setMyPermit(null); setPermitModal(false); }}
+              >
+                <View style={[styles.permitDot, { backgroundColor: '#6b7280' }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.permitOptionText}>Show all lots</Text>
+                  <Text style={styles.permitOptionSub}>Remove permit filter</Text>
+                </View>
+                {!myPermit && <Text style={styles.permitCheck}>✓</Text>}
+              </TouchableOpacity>
+            )}
+
+            {ALL_PERMITS.map(p => (
+              <TouchableOpacity
+                key={p}
+                style={[styles.permitOption, myPermit === p && styles.permitOptionActive]}
+                onPress={() => { setMyPermit(p); setPermitModal(false); }}
+              >
+                <View style={[styles.permitDot, { backgroundColor: LOT_COLORS[p] || '#6b7280' }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.permitOptionText}>{p}</Text>
+                  <Text style={styles.permitOptionSub}>
+                    {PERMIT_ACCESS[p]?.length} lot type{PERMIT_ACCESS[p]?.length !== 1 ? 's' : ''} accessible
+                  </Text>
+                </View>
+                {myPermit === p && <Text style={styles.permitCheck}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -239,7 +322,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, marginBottom: 10,
   },
   appName: { color: '#fff', fontSize: 20, fontWeight: '800' },
-  lotCount: { color: 'rgba(255,255,255,0.4)', fontSize: 12 },
+  permitBtn: {
+    backgroundColor: '#161b22', borderRadius: 20,
+    paddingVertical: 6, paddingHorizontal: 14,
+    borderWidth: 1, borderColor: ORANGE,
+  },
+  permitBtnText: { color: ORANGE, fontSize: 12, fontWeight: '700' },
+
+  permitBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingTop: 8,
+  },
+  permitBannerText: { color: 'rgba(255,255,255,0.5)', fontSize: 11 },
+  permitBannerClear: { color: ORANGE, fontSize: 11, fontWeight: '700' },
 
   filters: { flexDirection: 'row', paddingHorizontal: 16, gap: 8 },
   chip: {
@@ -299,4 +394,30 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: 10, alignSelf: 'center',
     fontSize: 10, color: 'rgba(255,255,255,0.3)',
   },
+
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
+  modalSheet: {
+    backgroundColor: '#161b22',
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 24, paddingBottom: 40, maxHeight: '80%',
+    borderTopWidth: 1, borderColor: '#2d333b',
+  },
+  modalHandle: {
+    width: 40, height: 4, backgroundColor: '#2d333b',
+    borderRadius: 2, alignSelf: 'center', marginBottom: 20,
+  },
+  modalTitle: { color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 6 },
+  modalSubtitle: { color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 20, lineHeight: 18 },
+
+  permitOption: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#0d1117', borderRadius: 12,
+    padding: 14, marginBottom: 10, gap: 12,
+    borderWidth: 1, borderColor: '#2d333b',
+  },
+  permitOptionActive: { borderColor: ORANGE },
+  permitDot: { width: 14, height: 14, borderRadius: 7 },
+  permitOptionText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  permitOptionSub: { color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 2 },
+  permitCheck: { color: ORANGE, fontSize: 18, fontWeight: '700' },
 });

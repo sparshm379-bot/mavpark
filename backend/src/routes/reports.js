@@ -42,9 +42,10 @@ router.get('/lot-status', async (req, res) => {
       const crowdOpen = spots.filter((s) => s.reports[0]?.status === 'open').length;
       const crowdTaken = spots.filter((s) => s.reports[0]?.status === 'taken').length;
 
-      // Prefer Modii sensor data if available, fall back to crowdsource
       const sensorAvailable = g.available >= 0 ? g.available : null;
-      const openCount = sensorAvailable ?? crowdOpen;
+      const hasCrowdData = crowdOpen > 0 || crowdTaken > 0;
+      // -1 means no data at all — don't show as "full"
+      const openCount = sensorAvailable !== null ? sensorAvailable : (hasCrowdData ? crowdOpen : -1);
       const totalCount = g.capacity || spots.length;
 
       return {
@@ -56,7 +57,7 @@ router.get('/lot-status', async (req, res) => {
         isGarage: g.isGarage,
         capacity: totalCount,
         available: openCount,
-        source: sensorAvailable !== null ? 'sensor' : 'crowd',
+        source: sensorAvailable !== null ? 'sensor' : (hasCrowdData ? 'crowd' : 'none'),
       };
     });
 

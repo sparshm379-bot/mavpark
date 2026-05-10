@@ -18,4 +18,7 @@ export const useAppStore = create((set) => ({
     set((state) => ({
       alerts: { ...state.alerts, [garageId]: !state.alerts[garageId] },
     })),
+
+  myPermit: null,
+  setMyPermit: (permit) => set({ myPermit: permit }),
 }));
