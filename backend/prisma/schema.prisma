@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Garage {
+  id     String  @id @default(cuid())
+  name   String
+  lat    Float
+  lng    Float
+  floors Floor[]
+}
+
+model Floor {
+  id       String @id @default(cuid())
+  garageId String
+  level    Int
+  garage   Garage @relation(fields: [garageId], references: [id])
+  spots    Spot[]
+}
+
+model Spot {
+  id         String   @id @default(cuid())
+  floorId    String
+  row        String
+  number     Int
+  permitType String
+  floor      Floor    @relation(fields: [floorId], references: [id])
+  reports    Report[]
+}
+
+model Report {
+  id         String   @id @default(cuid())
+  spotId     String
+  status     String
+  reportedAt DateTime @default(now())
+  userId     String?
+  spot       Spot     @relation(fields: [spotId], references: [id])
+}

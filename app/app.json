@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "MavPark",
+    "slug": "mavpark",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#003865"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.mavpark.app",
+      "config": {
+        "googleMapsApiKey": "YOUR_IOS_GOOGLE_MAPS_KEY"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#003865"
+      },
+      "package": "com.mavpark.app",
+      "config": {
+        "googleMaps": {
+          "apiKey": "YOUR_ANDROID_GOOGLE_MAPS_KEY"
+        }
+      }
+    },
+    "plugins": [
+      [
+        "react-native-maps",
+        {
+          "googleMapsApiKey": "YOUR_ANDROID_GOOGLE_MAPS_KEY"
+        }
+      ]
+    ]
+  }
+}
